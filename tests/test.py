@@ -1,9 +1,11 @@
 import sys
 import time
+from hashlib import sha256
+from random import randint
 
 import grpc
 
-from lnd_grpc.protos import rpc_pb2
+from lnd_grpc.protos import invoices_pb2 as invoices_pb2, rpc_pb2
 from loop_rpc.protos import loop_client_pb2
 from test_utils.fixtures import *
 from test_utils.lnd import LndNode
@@ -168,6 +170,12 @@ def wipe_channels_from_disk(node, network='regtest'):
     os.remove(_channel_db)
     assert not os.path.exists(_channel_backup)
     assert not os.path.exists(_channel_db)
+
+
+def random_32_byte_hash():
+    n = str(randint(0, 1e32))
+    _hash = sha256(n.encode())
+    return _hash.digest(), n
 
 
 #########
@@ -603,28 +611,6 @@ class TestInteractiveLightning:
         assert type(update) == rpc_pb2.PolicyUpdateResponse
 
 
-class TestLoop:
-
-    def test_loop_out_quote(self, bitcoind, alice, bob, loopd):
-        alice, bob = setup_nodes(bitcoind, [alice, bob])
-        if alice.invoice_rpc_active:
-            quote = loopd.loop_out_quote(amt=250000)
-            print(quote)
-            assert quote is not None
-            assert type(quote) == loop_client_pb2.QuoteResponse
-        else:
-            logging.info("test_loop_out() skipped as invoice RPC not detected")
-
-    def test_loop_out_terms(self, bitcoind, alice, bob, loopd):
-        alice, bob = setup_nodes(bitcoind, [alice, bob])
-        if alice.invoice_rpc_active:
-            terms = loopd.loop_out_terms()
-            assert terms is not None
-            assert type(terms) == loop_client_pb2.TermsResponse
-        else:
-            logging.info("test_loop_out() skipped as invoice RPC not detected")
-
-
 class TestChannelBackup:
 
     def test_export_verify_restore_multi(self, bitcoind, bob, carol):
@@ -660,3 +646,42 @@ class TestChannelBackup:
 
     # TODO: add single_chan_verify_restore
     #   awaiting outcome of https://github.com/lightningnetwork/lnd/issues/3009
+
+
+class TestInvoices:
+
+    def test_add_cancel_invoice(self, bitcoind, bob, carol):
+        bob, carol = setup_nodes(bitcoind, [bob, carol])
+        _hash, preimage = random_32_byte_hash()
+
+        invoice = bob.add_hold_invoice(memo='testing_hold invoice',
+                                       hash=_hash,
+                                       value=1000)
+        assert type(invoice) == invoices_pb2.AddHoldInvoiceResp
+
+        invoice_subscription = bob.subscribe_single_invoice(r_hash=_hash)
+        # assert type(invoice_subscription) == rpc_pb2.Invoice
+
+        print(carol.pay_invoice(payment_request=invoice.payment_request))
+
+
+class TestLoop:
+
+    def test_loop_out_quote(self, bitcoind, alice, bob, loopd):
+        alice, bob = setup_nodes(bitcoind, [alice, bob])
+        if alice.invoice_rpc_active:
+            quote = loopd.loop_out_quote(amt=250000)
+            print(quote)
+            assert quote is not None
+            assert type(quote) == loop_client_pb2.QuoteResponse
+        else:
+            logging.info("test_loop_out() skipped as invoice RPC not detected")
+
+    def test_loop_out_terms(self, bitcoind, alice, bob, loopd):
+        alice, bob = setup_nodes(bitcoind, [alice, bob])
+        if alice.invoice_rpc_active:
+            terms = loopd.loop_out_terms()
+            assert terms is not None
+            assert type(terms) == loop_client_pb2.TermsResponse
+        else:
+            logging.info("test_loop_out() skipped as invoice RPC not detected")
